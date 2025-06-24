@@ -208,6 +208,24 @@ impl NativeWindow {
     Ok(cloaked != 0)
   }
 
+  /// Returns true if this window is a known WSLg/X11/remote Linux GUI window.
+  fn is_known_wsls_x11_window(&self) -> bool {
+    // Common process and class names for WSLg, X11, and remote Linux GUI apps
+    // - mstsc.exe: WSLg (classic)
+    // - msrdc.exe: WSLg (preview)
+    // - vcxsrv.exe: X11 server
+    // - X410.exe: X410 X server
+    // - class RAIL_WINDOW: WSLg windows
+    // (all process names are checked without extension)
+    let process = self.process_name().unwrap_or_default().to_lowercase();
+    let class = self.class_name().unwrap_or_default();
+    process == "mstsc"
+        || process == "msrdc"
+        || process == "vcxsrv"
+        || process == "x410"
+        || class == "RAIL_WINDOW"
+  }
+
   pub fn is_manageable(&self) -> anyhow::Result<bool> {
     // Ignore windows that are hidden.
     if !self.is_visible()? {
@@ -217,13 +235,24 @@ impl NativeWindow {
     // Ensure window has a valid process name, title, and class name.
     let process_name = self.process_name()?;
     let title = self.title()?;
-    let _ = self.class_name()?;
+    let class_name = self.class_name()?;
 
     // TODO: Temporary fix for managing Flow Launcher until a force manage
     // command is added.
     if process_name == "Flow.Launcher" && title == "Flow.Launcher" {
       return Ok(true);
     }
+
+    // --- PATCH: Allow WSLg/X11 windows to be managed even if they lack normal styles ---
+    if self.is_known_wsls_x11_window() {
+      // Still require the window to be top-level and visible, but skip style checks
+      if self.refresh_frame_position().is_ok() {
+        return Ok(true);
+      } else {
+        return Ok(false);
+      }
+    }
+    // --- END PATCH ---
 
     // Ensure window is top-level (i.e. not a child window). Ignore windows
     // that cannot be focused or if they're unavailable in task switcher
@@ -292,7 +321,7 @@ impl NativeWindow {
   /// Whether the window has resize handles.
   #[must_use]
   pub fn is_resizable(&self) -> bool {
-    self.has_window_style(WS_THICKFRAME)
+    self.has_window_style(WS_THICKFRAME) || self.is_known_wsls_x11_window()
   }
 
   /// Whether the window is fullscreen.
